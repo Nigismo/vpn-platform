@@ -1,9 +1,5 @@
 version: "3.9"
 
-# ============================================================
-# VPN Platform — Docker Compose (Production)
-# ============================================================
-
 networks:
   vpn_network:
     driver: bridge
@@ -18,9 +14,6 @@ volumes:
 
 services:
 
-  # ----------------------------------------------------------
-  # PostgreSQL — основная база данных
-  # ----------------------------------------------------------
   postgres:
     image: postgres:16-alpine
     container_name: vpn_postgres
@@ -32,25 +25,15 @@ services:
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
-      vpn_network:
-        ipv4_address: 172.20.0.10
+      - vpn_network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vpnuser} -d ${POSTGRES_DB:-vpnplatform}"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 20s
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-          cpus: "2"
 
-  # ----------------------------------------------------------
-  # Redis — кэш и rate limiting
-  # ----------------------------------------------------------
   redis:
     image: redis:7-alpine
     container_name: vpn_redis
@@ -65,29 +48,21 @@ services:
     volumes:
       - redis_data:/data
     networks:
-      vpn_network:
-        ipv4_address: 172.20.0.11
+      - vpn_network
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-          cpus: "0.5"
 
-  # ----------------------------------------------------------
-  # Telegram Bot — основной сервис
-  # ----------------------------------------------------------
   bot:
     build:
       context: .
       dockerfile: Dockerfile
-      target: runtime
     container_name: vpn_bot
     restart: unless-stopped
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy
@@ -97,33 +72,20 @@ services:
       - bot_logs:/app/logs
     networks:
       - vpn_network
-    healthcheck:
-      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-          cpus: "2"
     logging:
       driver: "json-file"
       options:
         max-size: "50m"
         max-file: "5"
 
-  # ----------------------------------------------------------
-  # Alembic migrations — запускается один раз при старте
-  # ----------------------------------------------------------
   migrate:
     build:
       context: .
       dockerfile: Dockerfile
-      target: runtime
     container_name: vpn_migrate
-    command: ["alembic", "upgrade", "head"]
+    entrypoint: ["sh", "-c", "pip install --no-cache-dir -r requirements.txt && alembic upgrade head"]
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy
