@@ -36,3 +36,7 @@ cryptography==44.0.0
 
 # === Dev / Lint ===
 black==24.10.0
+
+# === Missing Drivers ===
+psycopg2-binary>=2.9.9
+
