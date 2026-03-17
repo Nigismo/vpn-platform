@@ -2,28 +2,33 @@
 aiogram==3.13.0
 
 # === Database ===
-sqlalchemy==2.0.38
-asyncpg==0.30.0
-alembic==1.14.0
-psycopg2-binary>=2.9.9
+sqlalchemy==2.0.36
+asyncpg==0.29.0
+alembic==1.13.3
+psycopg2-binary==2.9.10
 
-# === Cache & Queue ===
-redis==5.2.1
+# === Cache ===
+redis==5.2.0
 
 # === Config & Validation ===
-pydantic-settings==2.7.0
-pydantic==2.10.4
+pydantic-settings==2.6.1
+pydantic==2.10.3
 
 # === HTTP Client ===
-aiohttp==3.11.11
-httpx==0.28.1
+aiohttp==3.11.10
+httpx==0.27.2
 
 # === Logging ===
-loguru==0.7.3
+loguru==0.7.2
 
-# === Scheduling & Utils ===
-apscheduler==3.11.0
-yookassa==3.5.0
+# === Scheduling ===
+apscheduler==3.10.4
+
+# === Payment ===
+yookassa==3.4.0
+
+# === Utils ===
 python-dotenv==1.0.1
-ujson==5.10.0
 pytz==2024.2
+Pillow==10.4.0
+cryptography==43.0.3
