@@ -91,8 +91,6 @@ services:
       target: runtime
     container_name: vpn_bot
     restart: unless-stopped
-    env_file:
-      - .env
     depends_on:
       postgres:
         condition: service_healthy
@@ -129,8 +127,6 @@ services:
       target: runtime
     container_name: vpn_migrate
     command: ["alembic", "upgrade", "head"]
-    env_file:
-      - .env
     depends_on:
       postgres:
         condition: service_healthy
