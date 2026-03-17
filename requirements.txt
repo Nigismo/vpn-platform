@@ -1,0 +1,38 @@
+# === Core Bot Framework ===
+aiogram==3.13.0
+
+# === Database ===
+sqlalchemy==2.0.38
+asyncpg==0.30.0
+alembic==1.14.0
+
+# === Cache & Queue ===
+redis==5.2.1
+
+# === Config & Validation ===
+pydantic-settings==2.7.0
+pydantic==2.10.4
+
+# === HTTP Client ===
+aiohttp==3.11.11
+httpx==0.28.1
+
+# === Logging ===
+loguru==0.7.3
+
+# === Scheduling ===
+apscheduler==3.11.0
+
+# === Payment ===
+yookassa==3.5.0
+
+# === Utils ===
+python-dotenv==1.0.1
+ujson==5.10.0
+pytz==2024.2
+qrcode==8.0
+Pillow==11.1.0
+cryptography==44.0.0
+
+# === Dev / Lint ===
+black==24.10.0
