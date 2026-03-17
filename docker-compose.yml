@@ -61,8 +61,6 @@ services:
       dockerfile: Dockerfile
     container_name: vpn_bot
     restart: unless-stopped
-    env_file:
-      - .env
     depends_on:
       postgres:
         condition: service_healthy
@@ -83,9 +81,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: vpn_migrate
-    entrypoint: ["sh", "-c", "pip install --no-cache-dir -r requirements.txt && alembic upgrade head"]
-    env_file:
-      - .env
+    entrypoint: ["sh", "-c", "pip install --no-cache-dir -r requirements.txt && alembic upgrade head"]    
     depends_on:
       postgres:
         condition: service_healthy
