@@ -1,20 +1,22 @@
-FROM python:3.11-slim AS runtime
+# Берем полный образ со всеми компиляторами (решает проблемы с C/C++ расширениями)
+FROM python:3.11 AS runtime
 
 WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Только самое необходимое для базы данных
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libpq-dev \
-    python3-dev \
-    && rm -rf /var/lib/apt/lists/*
-
+# Копируем список
 COPY requirements.txt .
+
+# Обязательно обновляем pip перед установкой!
+RUN pip install --no-cache-dir --upgrade pip
+
+# Устанавливаем наши легкие зависимости (скомпилируются без проблем)
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Копируем код бота
 COPY . .
 
+# Запуск
 CMD ["python", "main.py"]
