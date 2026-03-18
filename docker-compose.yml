@@ -97,9 +97,16 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      - BOT_TOKEN
+      - ADMIN_IDS
       - POSTGRES_DB
       - POSTGRES_USER
       - POSTGRES_PASSWORD
+      - REDIS_PASSWORD
+      - MARZBAN_URL
+      - MARZBAN_USERNAME
+      - MARZBAN_PASSWORD
+      - VPN_DOMAINS
     networks:
       - vpn_network
     restart: "no"
