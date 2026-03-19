@@ -107,6 +107,7 @@ services:
       - MARZBAN_USERNAME
       - MARZBAN_PASSWORD
       - VPN_DOMAINS
+      - SBER_LINK
     networks:
       - vpn_network
     restart: "no"
