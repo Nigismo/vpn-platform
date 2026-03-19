@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     # ----------------------------------------------------------
     vpn_domains: List[str] = []
     primary_domain: str = ""
+    sber_link: str
 
     @field_validator("vpn_domains", mode="before")
     @classmethod
