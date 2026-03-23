@@ -1,103 +1,88 @@
 """
 bot/tasks/scheduler.py — Фоновые задачи на APScheduler.
-Проверка истекающих подписок, уведомления, синхронизация нод.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from loguru import logger
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from config import settings
 from database.models import Subscription, SubscriptionStatus, User, VpnNode
 from database.session import get_session
 
-scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
 
-
-async def check_expiring_subscriptions(bot: Bot) -> None:
-    """Каждые 6 часов: уведомляем о скором истечении подписки."""
-    logger.info("Задача: проверка истекающих подписок")
+async def check_expiring_subscriptions(bot) -> None:
+    logger.info("⏰ Проверка истекающих подписок")
     now = datetime.now(timezone.utc)
+    notifications_sent = 0
 
     async with get_session() as session:
-        for days_before in settings.notify_days_before:
-            notify_from = now + timedelta(days=days_before)
-            notify_to = notify_from + timedelta(hours=6)
+        # FIX: используем notify_days_list вместо notify_days_before (строки)
+        for days_before in settings.notify_days_list:
+            target_time = now + timedelta(days=days_before)
+            window_start = target_time - timedelta(hours=6)
+
+            notified_field = (
+                Subscription.notified_3_days
+                if days_before == 3
+                else Subscription.notified_1_day
+            )
 
             result = await session.execute(
-                select(Subscription).where(
+                select(Subscription)
+                .options(selectinload(Subscription.user))
+                .where(
                     Subscription.status == SubscriptionStatus.ACTIVE,
-                    Subscription.expires_at >= notify_from,
-                    Subscription.expires_at <= notify_to,
+                    Subscription.expires_at.between(window_start, target_time),
+                    notified_field == False,
                 )
             )
             subscriptions = result.scalars().all()
 
             for sub in subscriptions:
-                already_notified = (
-                    sub.notified_3_days if days_before == 3 else sub.notified_1_day
-                )
-                if already_notified:
+                if not sub.user or sub.user.is_blocked:
                     continue
 
-                user_result = await session.execute(
-                    select(User).where(User.id == sub.user_id)
+                expires_str = sub.expires_at.strftime("%d.%m.%Y")
+                days_text = "3 дня" if days_before == 3 else "1 день"
+
+                text = (
+                    f"⏰ <b>Ваша подписка скоро истекает!</b>\n\n"
+                    f"Осталось: <b>{days_text}</b>\n"
+                    f"Дата окончания: {expires_str}\n\n"
+                    f"Продлите подписку командой /buy"
                 )
-                user = user_result.scalar_one_or_none()
-                if not user or user.is_blocked:
-                    continue
 
-                await _send_expiry_notification(bot, user.id, sub, days_before)
+                try:
+                    await bot.send_message(sub.user_id, text, parse_mode="HTML")
+                    notifications_sent += 1
+                    if days_before == 3:
+                        sub.notified_3_days = True
+                    else:
+                        sub.notified_1_day = True
+                except Exception as exc:
+                    logger.warning(f"Не удалось отправить уведомление user={sub.user_id}: {exc}")
 
-                if days_before == 3:
-                    sub.notified_3_days = True
-                else:
-                    sub.notified_1_day = True
-
-    logger.info("Задача проверки истекающих подписок завершена")
-
-
-async def _send_expiry_notification(
-    bot: Bot, user_id: int, subscription: Subscription, days_left: int
-) -> None:
-    """Отправляем уведомление об истечении подписки."""
-    expire_str = subscription.expires_at.strftime("%d.%m.%Y")
-    if days_left > 1:
-        text = (
-            f"⚠️ <b>Подписка истекает через {days_left} дня!</b>\n\n"
-            f"📅 Дата: {expire_str}\n\n"
-            f"🔄 Продлите сейчас, чтобы не терять доступ к VPN."
-        )
-    else:
-        text = (
-            f"🔴 <b>Подписка истекает ЗАВТРА!</b>\n\n"
-            f"📅 Дата: {expire_str}\n\n"
-            f"⚡ Продлите прямо сейчас!"
-        )
-
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🔄 Продлить подписку", callback_data="vpn:renew")
-    try:
-        await bot.send_message(user_id, text, parse_mode="HTML", reply_markup=builder.as_markup())
-    except Exception as exc:
-        logger.warning(f"Не удалось отправить уведомление user={user_id}: {exc}")
+    logger.info(f"✅ Уведомлений отправлено: {notifications_sent}")
 
 
-async def remove_expired_subscriptions() -> None:
-    """Ежедневно: деактивируем истёкшие подписки и удаляем из Marzban."""
-    logger.info("Задача: удаление истёкших подписок")
+async def cleanup_expired_subscriptions(bot) -> None:
+    logger.info("🗑️ Очистка истёкших подписок")
     now = datetime.now(timezone.utc)
-    count = 0
+    cleaned = 0
 
     async with get_session() as session:
         result = await session.execute(
-            select(Subscription).where(
+            select(Subscription)
+            .options(selectinload(Subscription.user))
+            .where(
                 Subscription.status == SubscriptionStatus.ACTIVE,
                 Subscription.expires_at <= now,
             )
@@ -105,85 +90,102 @@ async def remove_expired_subscriptions() -> None:
         expired_subs = result.scalars().all()
 
         from bot.services.subscription import subscription_service
+
         for sub in expired_subs:
             try:
                 await subscription_service.expire_subscription(session, sub)
-                count += 1
+                cleaned += 1
+
+                if sub.user and not sub.user.is_blocked:
+                    try:
+                        await bot.send_message(
+                            sub.user_id,
+                            "❌ <b>Ваша подписка истекла.</b>\n\nДля продолжения используйте /buy",
+                            parse_mode="HTML",
+                        )
+                    except Exception as exc:
+                        logger.warning(f"Не удалось уведомить user={sub.user_id}: {exc}")
+
             except Exception as exc:
                 logger.error(f"Ошибка деактивации подписки {sub.id}: {exc}")
 
-    logger.info(f"Деактивировано истёкших подписок: {count}")
+    logger.info(f"✅ Деактивировано подписок: {cleaned}")
 
 
 async def sync_node_stats() -> None:
-    """Ежедневно: синхронизируем счётчики нод с реальными данными БД."""
-    logger.info("Задача: синхронизация статистики нод")
+    logger.info("🔄 Синхронизация нод")
+
     async with get_session() as session:
         result = await session.execute(select(VpnNode))
         nodes = result.scalars().all()
+
         from bot.services.node_balancer import node_balancer
+
         for node in nodes:
             try:
                 await node_balancer.sync_node_stats(session, node.id)
             except Exception as exc:
                 logger.error(f"Ошибка синхронизации ноды {node.id}: {exc}")
-    logger.info("Синхронизация нод завершена")
+
+    logger.info("✅ Синхронизация нод завершена")
 
 
-async def monitor_node_load(bot: Bot) -> None:
-    """Каждые 30 минут: алерт администраторам при перегрузке нод."""
+async def monitor_node_load(bot) -> None:
     async with get_session() as session:
         from bot.services.node_balancer import node_balancer
         nodes_stats = await node_balancer.get_all_nodes_stats(session)
+
         for node in nodes_stats:
             if node["load_percent"] >= settings.node_alert_threshold:
                 alert_text = (
-                    f"🔴 <b>АЛЕРТ: Перегрузка сервера!</b>\n\n"
-                    f"{node['emoji']} <b>{node['country']}</b> — {node['ip']}\n"
-                    f"Нагрузка: <b>{node['load_percent']}%</b> "
+                    f"🔴 <b>АЛЕРТ: Перегрузка ноды!</b>\n\n"
+                    f"{node['emoji']} {node['country']} — {node['name']}\n"
+                    f"Загрузка: <b>{node['load_percent']}%</b> "
                     f"({node['current_users']}/{node['max_users']})"
                 )
-                for admin_id in settings.admin_ids:
+                # FIX: используем admin_ids_list вместо admin_ids (строки)
+                for admin_id in settings.admin_ids_list:
                     try:
                         await bot.send_message(admin_id, alert_text, parse_mode="HTML")
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning(f"Не удалось отправить алерт admin={admin_id}: {exc}")
 
 
-def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
-    """Регистрируем все задачи и возвращаем готовый планировщик."""
+def setup_scheduler(bot) -> AsyncIOScheduler:
+    # FIX: единый timezone UTC везде
+    scheduler = AsyncIOScheduler(timezone="UTC")
+
     scheduler.add_job(
         check_expiring_subscriptions,
-        trigger="interval",
-        hours=6,
-        kwargs={"bot": bot},
+        trigger=IntervalTrigger(hours=6),
+        args=[bot],
         id="check_expiring",
-        replace_existing=True,
-        next_run_time=datetime.now(),
+        max_instances=1,
+        misfire_grace_time=300,
     )
     scheduler.add_job(
-        remove_expired_subscriptions,
-        trigger="cron",
-        hour=2,
-        minute=0,
-        id="remove_expired",
-        replace_existing=True,
+        cleanup_expired_subscriptions,
+        trigger=CronTrigger(hour=3, minute=0, timezone="UTC"),
+        args=[bot],
+        id="cleanup_expired",
+        max_instances=1,
+        misfire_grace_time=600,
     )
     scheduler.add_job(
         sync_node_stats,
-        trigger="cron",
-        hour=3,
-        minute=0,
+        trigger=CronTrigger(hour=4, minute=0, timezone="UTC"),
         id="sync_nodes",
-        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=600,
     )
     scheduler.add_job(
         monitor_node_load,
-        trigger="interval",
-        minutes=30,
-        kwargs={"bot": bot},
+        trigger=IntervalTrigger(minutes=30),
+        args=[bot],
         id="monitor_nodes",
-        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=120,
     )
-    logger.info("Планировщик настроен (4 задачи)")
+
+    logger.info("📅 Планировщик задач настроен")
     return scheduler
